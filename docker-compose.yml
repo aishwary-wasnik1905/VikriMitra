@@ -1,0 +1,125 @@
+services:
+
+  postgres:
+    image: postgres:16
+    container_name: vikrimithra-postgres
+    restart: unless-stopped
+
+    environment:
+      POSTGRES_DB: vikrimithra
+      POSTGRES_USER: vikrimithra
+      POSTGRES_PASSWORD: vikrimithra_password
+
+    ports:
+      - "5432:5432"
+
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U vikrimithra -d vikrimithra"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  db-init:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+
+    container_name: vikrimithra-db-init
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+    environment:
+      POSTGRES_DB: vikrimithra
+      POSTGRES_USER: vikrimithra
+      POSTGRES_PASSWORD: vikrimithra_password
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+
+    command:
+      ["python", "-m", "backend.database.bootstrap_db"]
+
+    restart: "no"
+
+  mcp:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+
+    container_name: vikrimithra-mcp
+
+    depends_on:
+      db-init:
+        condition: service_completed_successfully
+
+    environment:
+      POSTGRES_DB: vikrimithra
+      POSTGRES_USER: vikrimithra
+      POSTGRES_PASSWORD: vikrimithra_password
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+
+    command:
+      ["python", "-m", "backend.mcp_server.server"]
+
+    ports:
+      - "8001:8001"
+
+  api:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+
+    container_name: vikrimithra-api
+
+    depends_on:
+      db-init:
+        condition: service_completed_successfully
+      mcp:
+        condition: service_started
+
+    environment:
+      POSTGRES_DB: vikrimithra
+      POSTGRES_USER: vikrimithra
+      POSTGRES_PASSWORD: vikrimithra_password
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      GROQ_API_KEY: ${GROQ_API_KEY}
+      GROQ_MODEL: ${GROQ_MODEL:-openai/gpt-oss-20b}
+      AGENT_MODE: ${AGENT_MODE:-llm}
+      LLM_TIMEOUT_SECONDS: ${LLM_TIMEOUT_SECONDS:-15}
+      MCP_URL: http://mcp:8001/mcp
+
+    command:
+      [
+        "uvicorn",
+        "backend.app.main:app",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "8000"
+      ]
+
+    ports:
+      - "8000:8000"
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+
+    container_name: vikrimithra-frontend
+
+    depends_on:
+      api:
+        condition: service_started
+
+    ports:
+      - "5173:5173"
+
+volumes:
+  postgres_data:
